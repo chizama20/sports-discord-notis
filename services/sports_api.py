@@ -1,5 +1,45 @@
 import aiohttp
-from config import API_SPORTS_KEY, BALLDONTLIE_KEY, LEAGUES
+from config import API_SPORTS_KEY, BALLDONTLIE_KEY, NEWS_API_KEY, LEAGUES
+
+NEWS_URL = "https://newsapi.org/v2/everything"
+
+LEAGUE_NEWS_QUERY = {
+    "nba": "NBA basketball",
+    "nfl": "NFL football",
+    "epl": "Premier League soccer",
+    "laliga": "La Liga soccer",
+    "seriea": "Serie A soccer",
+    "bundesliga": "Bundesliga soccer",
+    "ligue1": "Ligue 1 soccer",
+    "ucl": "Champions League soccer",
+}
+
+
+async def get_news(query: str, page_size: int = 5) -> list[dict]:
+    """Fetch latest news articles for a team or league query."""
+    async with aiohttp.ClientSession() as session:
+        data = await _get(
+            session,
+            NEWS_URL,
+            {
+                "q": query,
+                "apiKey": NEWS_API_KEY,
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": page_size,
+            },
+            {},
+        )
+        return [
+            {
+                "title": a.get("title", "No title"),
+                "source": a.get("source", {}).get("name", ""),
+                "url": a.get("url", ""),
+                "published": a.get("publishedAt", "")[:10],
+            }
+            for a in data.get("articles", [])
+            if a.get("title") and "[Removed]" not in a.get("title", "")
+        ]
 
 BASE_URL = "https://v3.football.api-sports.io"
 BDL_URL = "https://api.balldontlie.io/v1"
@@ -20,12 +60,10 @@ def _nfl_headers():
     return {"x-apisports-key": API_SPORTS_KEY}
 
 
-async def _get(session: aiohttp.ClientSession, url: str, params: dict, headers: dict) -> dict:
+async def _get(session: aiohttp.ClientSession, url: str, params: dict | list, headers: dict) -> dict:
     async with session.get(url, params=params, headers=headers) as resp:
-        data = await resp.json()
-        print(f"[API] {url} params={params} status={resp.status} results={data.get('results')} errors={data.get('errors')}")
         resp.raise_for_status()
-        return data
+        return await resp.json()
 
 
 async def get_scores(league: str) -> list[dict]:
@@ -83,6 +121,25 @@ async def get_team_game(league: str, team: str) -> dict | None:
         if team_lower in game["home"].lower() or team_lower in game["away"].lower():
             return game
     return None
+
+
+async def get_all_games_today(league: str) -> list[dict]:
+    """Return all of today's games (scheduled, live, and final) for a league."""
+    async with aiohttp.ClientSession() as session:
+        if league in SOCCER_LEAGUES:
+            from datetime import date
+            data = await _get(
+                session,
+                f"{BASE_URL}/fixtures",
+                {"league": LEAGUES[league], "date": date.today().isoformat()},
+                _soccer_headers(),
+            )
+            return [_normalize_soccer(f, league) for f in data.get("response", [])]
+        elif league == "nba":
+            return await _get_nba_scores(session)
+        elif league == "nfl":
+            return await _get_nfl_scores(session)
+    return []
 
 
 async def get_standings(league: str) -> list[dict]:
@@ -161,6 +218,75 @@ def _normalize_nfl(game: dict) -> dict:
         "status": game.get("game", {}).get("status", {}).get("short", ""),
         "clock": game.get("game", {}).get("status", {}).get("timer"),
     }
+
+
+async def get_nba_schedule(team: str, limit: int = 5) -> list[dict]:
+    """Return the next N upcoming games for an NBA team."""
+    from datetime import date
+    today = date.today().isoformat()
+    async with aiohttp.ClientSession() as session:
+        team_data = await _get(session, f"{BDL_URL}/teams", {"search": team, "per_page": 1}, _nba_headers())
+        teams = team_data.get("data", [])
+        if not teams:
+            return []
+        team_id = teams[0]["id"]
+        params = [
+            ("team_ids[]", team_id),
+            ("start_date", today),
+            ("seasons[]", 2025),
+            ("per_page", limit),
+        ]
+        data = await _get(session, f"{BDL_URL}/games", params, _nba_headers())
+        return [_normalize_nba_schedule(g) for g in data.get("data", [])]
+
+
+def _normalize_nba_schedule(game: dict) -> dict:
+    raw_status = game.get("status", "")
+    is_time = raw_status and raw_status[0].isdigit()
+    return {
+        "date": game.get("date", "")[:10],
+        "home": game.get("home_team", {}).get("full_name", "?"),
+        "away": game.get("visitor_team", {}).get("full_name", "?"),
+        "time": raw_status if is_time else None,
+        "status": raw_status if not is_time else "Scheduled",
+    }
+
+
+async def get_player_stats(name: str) -> dict | None:
+    """Return current season averages for an NBA player."""
+    async with aiohttp.ClientSession() as session:
+        player_data = await _get(
+            session, f"{BDL_URL}/players", {"search": name, "per_page": 5}, _nba_headers()
+        )
+        players = player_data.get("data", [])
+        if not players:
+            return None
+        player = players[0]
+        avg_data = await _get(
+            session,
+            f"{BDL_URL}/season_averages",
+            [("player_ids[]", player["id"]), ("season", 2025)],
+            _nba_headers(),
+        )
+        avgs = avg_data.get("data", [])
+        if not avgs:
+            return {"player": player, "averages": None}
+        return {"player": player, "averages": avgs[0]}
+
+
+async def get_nba_leaders(stat: str = "pts", limit: int = 10) -> list[dict]:
+    """Return NBA season leaders for a given stat (pts, reb, ast, stl, blk)."""
+    async with aiohttp.ClientSession() as session:
+        data = await _get(
+            session,
+            f"{BDL_URL}/season_averages",
+            [("season", 2025), ("per_page", 100), ("sort_by", stat)],
+            _nba_headers(),
+        )
+        entries = data.get("data", [])
+        valid = [e for e in entries if e.get(stat) is not None]
+        valid.sort(key=lambda x: x.get(stat, 0), reverse=True)
+        return valid[:limit]
 
 
 def _normalize_standing(entry: dict) -> dict:

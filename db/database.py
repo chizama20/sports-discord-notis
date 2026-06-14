@@ -107,3 +107,11 @@ async def delete_tracked_game(game_id: str):
     async with get_db() as db:
         await db.execute("DELETE FROM tracked_games WHERE game_id = ?", (game_id,))
         await db.commit()
+
+
+async def get_all_guild_configs() -> list[dict]:
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT guild_id, updates_channel_id FROM guild_config") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
