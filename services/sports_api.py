@@ -1,4 +1,5 @@
 import aiohttp
+from datetime import datetime, timezone
 from config import API_SPORTS_KEY, BALLDONTLIE_KEY, NEWS_API_KEY, LEAGUES
 
 NEWS_URL = "https://newsapi.org/v2/everything"
@@ -162,6 +163,18 @@ async def get_standings(league: str) -> list[dict]:
             return []
 
 
+def _parse_dt(value) -> datetime | None:
+    """Parse an ISO8601 string or unix timestamp into a tz-aware UTC datetime."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _normalize_soccer(fixture: dict, league: str) -> dict:
     teams = fixture.get("teams", {})
     goals = fixture.get("goals", {})
@@ -175,6 +188,7 @@ def _normalize_soccer(fixture: dict, league: str) -> dict:
         "away_score": goals.get("away"),
         "status": status.get("short", "NS"),
         "clock": status.get("elapsed"),
+        "start_time": _parse_dt(fixture.get("fixture", {}).get("date")),
     }
 
 
@@ -204,6 +218,7 @@ def _normalize_nba(game: dict) -> dict:
         "away_score": game.get("visitor_team_score"),
         "status": status,
         "clock": clock,
+        "start_time": _parse_dt(game.get("datetime")),
     }
 
 
@@ -217,6 +232,7 @@ def _normalize_nfl(game: dict) -> dict:
         "away_score": game.get("scores", {}).get("away", {}).get("total"),
         "status": game.get("game", {}).get("status", {}).get("short", ""),
         "clock": game.get("game", {}).get("status", {}).get("timer"),
+        "start_time": _parse_dt(game.get("game", {}).get("date", {}).get("timestamp")),
     }
 
 

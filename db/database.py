@@ -80,15 +80,12 @@ async def get_followers_for_teams(guild_id: str, league: str, home: str, away: s
             return [r[0] for r in rows]
 
 
-async def upsert_tracked_game(game_id: str, league: str, status: str, score: str, channel_id: str):
+async def upsert_tracked_game(game_id: str, league: str, stage: int):
     async with get_db() as db:
         await db.execute(
-            "INSERT INTO tracked_games (game_id, league, last_status, last_score, channel_id)"
-            " VALUES (?, ?, ?, ?, ?)"
-            " ON CONFLICT(game_id) DO UPDATE SET"
-            "  last_status = excluded.last_status,"
-            "  last_score = excluded.last_score",
-            (game_id, league, status, score, channel_id),
+            "INSERT INTO tracked_games (game_id, league, stage) VALUES (?, ?, ?)"
+            " ON CONFLICT(game_id) DO UPDATE SET stage = excluded.stage",
+            (game_id, league, stage),
         )
         await db.commit()
 

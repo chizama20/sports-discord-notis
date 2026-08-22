@@ -7,12 +7,11 @@ CREATE TABLE IF NOT EXISTS follows (
     UNIQUE(user_id, guild_id, league, team)
 );
 
+-- stage: 0 = nothing sent, 1 = pregame reminder sent, 2 = halftime sent, 3 = final sent
 CREATE TABLE IF NOT EXISTS tracked_games (
     game_id TEXT PRIMARY KEY,
     league TEXT NOT NULL,
-    last_status TEXT,
-    last_score TEXT,
-    channel_id TEXT
+    stage INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS guild_config (

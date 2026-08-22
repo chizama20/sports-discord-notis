@@ -33,7 +33,12 @@
 | `/news <league> <query>` | `cogs/news.py` | Built, sync issue |
 
 ### Background Tasks
-- `tasks/live_updates.py` — polls every 60s, posts score changes + game start notifications
+- `tasks/live_updates.py` — polls every 60s, posts exactly 3 notifications per game (simplified 2026-08-22 to cut noise — no more per-basket/per-goal score-change spam):
+  1. **Pregame reminder** — fires `PREGAME_LEAD_MINUTES` (config.py, default 30) before scheduled tip-off/kickoff, using each game's `start_time`
+  2. **Halftime** — fires when status hits `HT`
+  3. **Final** — fires on final whistle
+  - Progress is tracked via `tracked_games.stage` (0/1/2/3) so restarts don't double-post or send a late "starting soon" for a game already in progress.
+  - Known gap: NFL `start_time` parsing (`game.game.date.timestamp` in `services/sports_api.py`) is best-effort/unverified against real API-Sports NFL responses — if the field name is wrong, NFL just silently skips the pregame reminder (falls through to a live-detected backfill instead), no crash.
 - `tasks/daily_digest.py` — posts schedule every morning at 9am ET (14:00 UTC)
 
 ## Known Issues to Fix Next Session
